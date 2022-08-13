@@ -26,7 +26,6 @@ pub mut:
 	peers shared map[int]PeerPtr
 	send_channel chan NetworkMessage = chan NetworkMessage{cap: 16}
 	receive_channel chan NetworkMessage = chan NetworkMessage{cap: 16}
-        first_node bool = true
         addr_book AddressBook
 }
 
@@ -84,7 +83,7 @@ pub fn (peer &Peer) get_ip() string {
 pub fn (mut netnode NetworkNode) run() {
 	go netnode.process_messages()
 	go netnode.connect('127.0.0.1:10001')
-        go netnode.cleanup_nodes()
+        go netnode.manage_nodes()
         netnode.listen()
 
 	netnode.send_channel.close()
@@ -108,10 +107,7 @@ fn (mut netnode NetworkNode) process_messages() {
                                     netnode.send_msg(peer.fd, construct_message(VersionMessage{}))
                                 }
 				netnode.send_msg(peer.fd, construct_message(Verack{}))
-                                if netnode.first_node {
-                                    netnode.first_node = false
-                                    netnode.send_msg(peer.fd, construct_message(GetAddr{}))
-                                }
+                                netnode.send_msg(peer.fd, construct_message(GetAddr{}))
 			}
 			Ping {
 				netnode.send_msg(peer.fd, construct_message(Pong{nonce: msg.payload.nonce}))
@@ -120,9 +116,7 @@ fn (mut netnode NetworkNode) process_messages() {
                                 for addr in msg.payload.list {
                                     if addr.ip[10] == 255 && addr.ip[11] == 255 && addr.port == 60543 {
                                         ip := "${addr.ip[12]}.${addr.ip[13]}.${addr.ip[14]}.${addr.ip[15]}:32748"
-                                        if netnode.should_connect(ip) {
-                                            netnode.connect(ip)
-                                        }
+                                        netnode.addr_book.add(ip)
                                     }
                                 }
                         }
@@ -227,7 +221,7 @@ fn (mut netnode NetworkNode) listen() {
     }
 }
 
-pub fn (mut netnode NetworkNode) cleanup_nodes() {
+pub fn (mut netnode NetworkNode) manage_nodes() {
     for {
         now := time.utc()
         shared peers := map[int]PeerPtr{}
@@ -250,6 +244,15 @@ pub fn (mut netnode NetworkNode) cleanup_nodes() {
             }
             netnode.peers = peers
         }
-        time.sleep(30 * time.second)
+
+        println("connecting to address book entries")
+        lock netnode.addr_book.entries {
+            for entry in netnode.addr_book.entries {
+                if netnode.should_connect(entry.ip) {
+                    netnode.connect(entry.ip)
+                }
+            }
+        }
+        time.sleep(5 * time.second)
     }
 }
