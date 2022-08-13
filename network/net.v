@@ -175,9 +175,20 @@ fn (mut netnode NetworkNode) listen() {
                     mut peer := netnode.get_peer(event.fd)
                     mut s := ""
                     mut len := 0
+                    time.sleep(400 * time.microsecond)
                     peer.mutex.@lock()
                     s, len = os.fd_read(event.fd, 16384) // TODO: handle larger messages
+                    println("Received ${len} bytes from ${event.fd}")
                     peer.mutex.unlock()
+                    $if dump_messages? {
+                        if mut file := os.open_append("${event.fd}.bin") {
+                            defer { file.close() }
+                            file.write_string(s) or { eprintln(err.str()) continue }
+                            file.flush()
+                        } else {
+                            eprintln("failed to open message dump file: ${err}")
+                        }
+                    }
                     if len < 24 {
                         // TODO: add banscore
                         continue
