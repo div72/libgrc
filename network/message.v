@@ -4,6 +4,7 @@ import time
 
 import cryptography
 import serialize
+import util
 
 pub fn calculate_checksum(message serialize.Streamable) []u8 {
 	mut stream := serialize.Stream{}
@@ -269,7 +270,7 @@ pub fn (mut msg Message) read(mut stream serialize.Stream) {
                         msg.payload = stream.read<Addr>()
                 }
 		else {
-			eprintln('Message.read: unknown command ${msg.command}')
+			eprintln('Message.read: unknown command ${util.sanitize_binary(msg.command)}')
 		}
 	}
 }
