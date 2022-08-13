@@ -200,10 +200,8 @@ fn (mut netnode NetworkNode) listen() {
                     mut s := ""
                     mut len := 0
                     time.sleep(400 * time.microsecond)
-                    peer.mutex.@lock()
                     s, len = os.fd_read(event.fd, 16384) // TODO: handle larger messages
                     println("Received ${len} bytes from ${event.fd}")
-                    peer.mutex.unlock()
                     $if dump_messages? {
                         if mut file := os.open_append("${event.fd}.bin") {
                             defer { file.close() }
@@ -217,7 +215,10 @@ fn (mut netnode NetworkNode) listen() {
                         // TODO: add banscore
                         continue
                     }
-                    msg := stream.read<Message>()
+                    mut stream2 := serialize.Stream{}
+                    stream2.data = s.str
+                    stream2.len = s.len
+                    msg := stream2.read<Message>()
                     // TODO: validity checks
                     netnode.receive_channel <- NetworkMessage{peer_fd: event.fd msg: msg}
                 }
