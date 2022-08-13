@@ -22,10 +22,18 @@ type PeerPtr = &Peer
 pub struct NetworkNode {
 pub mut:
         notifier notify.FdNotifier = notify.new() or { panic("failed to create notifier: ${err}") }
+        send_signal_fd int = -1
 	peers shared map[int]PeerPtr
-	message_channel chan NetworkMessage = chan NetworkMessage{cap: 16}
+	send_channel chan NetworkMessage = chan NetworkMessage{cap: 16}
+	receive_channel chan NetworkMessage = chan NetworkMessage{cap: 16}
         first_node bool = true
         addr_book AddressBook
+}
+
+pub fn (mut netnode NetworkNode) send_msg(fd int, msg Message) {
+    netnode.send_channel <- NetworkMessage{peer_fd: fd msg: msg}
+    mut buf := [1]u8{}
+    C.write(netnode.send_signal_fd, &buf[0], 1)
 }
 
 pub fn (mut netnode NetworkNode) get_peer(fd int) &Peer {
@@ -73,34 +81,23 @@ pub fn (peer &Peer) get_ip() string {
     return "${net.addr_from_socket_handle(peer.fd)}"
 }
 
-pub fn (mut peer Peer) write_msg<T>(obj T) {
-    mut stream := serialize.Stream{}
-    stream.allocate(4096)
-    stream.write(obj)
-    stream.seek(0)
-    println("writing to $peer.fd - ${typeof(obj).name}")
-    peer.mutex.@lock()
-    os.fd_write(peer.fd, string{str: stream.data len: stream.len})
-    peer.mutex.unlock()
-    println("wrote to $peer.fd - ${typeof(obj).name}")
-}
-
 pub fn (mut netnode NetworkNode) run() {
 	go netnode.process_messages()
 	go netnode.connect('127.0.0.1:10001')
         go netnode.cleanup_nodes()
         netnode.listen()
 
-	netnode.message_channel.close()
+	netnode.send_channel.close()
+	netnode.receive_channel.close()
 }
 
 fn (mut netnode NetworkNode) process_messages() {
 	mut stream := serialize.Stream{}
-	stream.allocate(4096)
+	stream.allocate(16384)
 	for {
 		stream.seek(0)
                 stream.len = 0
-		peer_msg := <-netnode.message_channel or { return }
+		peer_msg := <-netnode.receive_channel or { return }
                 mut peer := netnode.get_peer(peer_msg.peer_fd)
 		msg := peer_msg.msg
 		println(@FN + ": received ${msg.payload.type_name()} from ${peer_msg.peer_fd}")
@@ -108,16 +105,16 @@ fn (mut netnode NetworkNode) process_messages() {
 			VersionMessage {
                                 peer.user_agent = msg.payload.user_agent.clone()
                                 if peer.extrovert {
-                                    peer.write_msg(construct_message(VersionMessage{}))
+                                    netnode.send_msg(peer.fd, construct_message(VersionMessage{}))
                                 }
-				peer.write_msg(construct_message(Verack{}))
+				netnode.send_msg(peer.fd, construct_message(Verack{}))
                                 if netnode.first_node {
                                     netnode.first_node = false
-                                    peer.write_msg(construct_message(GetAddr{}))
+                                    netnode.send_msg(peer.fd, construct_message(GetAddr{}))
                                 }
 			}
 			Ping {
-				peer.write_msg(construct_message(Pong{nonce: msg.payload.nonce}))
+				netnode.send_msg(peer.fd, construct_message(Pong{nonce: msg.payload.nonce}))
 			}
                         Addr {
                                 for addr in msg.payload.list {
@@ -142,7 +139,8 @@ fn (mut netnode NetworkNode) connect(ip string) {
 	    netnode.peers[connection.sock.handle] = &Peer{fd: connection.sock.handle extrovert: false ip: ip}
 	}
         mut peer := netnode.get_peer(connection.sock.handle)
-        peer.write_msg(construct_message(VersionMessage{}))
+        time.sleep(3)
+        netnode.send_msg(peer.fd, construct_message(VersionMessage{}))
 }
 
 fn (mut netnode NetworkNode) listen() {
@@ -151,8 +149,22 @@ fn (mut netnode NetworkNode) listen() {
 
     netnode.notifier.add(listener.sock.handle, .read) or { panic("error while adding listener for notify: ${err}") }
 
+    mut pipe_buf := [256]u8{}
+    mut pipefds := [2]int{}
+    if C.pipe(&pipefds[0]) != 0 {
+        panic("error while creating the pipe")
+    }
+
+    netnode.notifier.add(pipefds[0], .read) or { panic("error while adding reader for notify: ${err}") }
+    netnode.send_signal_fd = pipefds[1]
+
+    mut stream := serialize.Stream{}
+    stream.allocate(4096)
+
     for {
         for event in netnode.notifier.wait(time.infinite) {
+            stream.len = 0
+            stream.seek(0)
             match event.fd {
                 listener.sock.handle {
                     if connection := listener.accept() {
@@ -163,6 +175,18 @@ fn (mut netnode NetworkNode) listen() {
                             // TODO: Check existing node?
                             netnode.peers[connection.sock.handle] = &Peer{fd: connection.sock.handle extrovert: true ip: ip}
                         }
+                    }
+                }
+                pipefds[0] {
+                    println("sending messages")
+                    C.read(pipefds[0], &pipe_buf[0], 256)
+                    mut msg := NetworkMessage{}
+                    for netnode.send_channel.try_pop(mut msg) == .success {
+                        // TODO: handle serialization at threads so that network thread has less work to do.
+                        stream.len = 0
+                        stream.seek(0)
+                        stream.write(msg.msg)
+                        os.fd_write(msg.peer_fd, tos(stream.data, stream.len))
                     }
                 }
                 else {
@@ -193,10 +217,9 @@ fn (mut netnode NetworkNode) listen() {
                         // TODO: add banscore
                         continue
                     }
-                    mut stream := serialize.Stream{data: s.str len: len}
                     msg := stream.read<Message>()
                     // TODO: validity checks
-                    netnode.message_channel <- NetworkMessage{peer_fd: event.fd msg: msg}
+                    netnode.receive_channel <- NetworkMessage{peer_fd: event.fd msg: msg}
                 }
             }
         }
