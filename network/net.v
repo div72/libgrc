@@ -15,7 +15,7 @@ const message_start = [u8(0xcd), 0xf2, 0xc0, 0xef]!  // testnet
 
 const protocol_version = 180327
 
-const connect_limit = 15
+const connect_limit = 1024
 
 type PeerPtr = &Peer
 
@@ -81,6 +81,10 @@ pub fn (peer &Peer) get_ip() string {
 }
 
 pub fn (mut netnode NetworkNode) run() {
+        for ip in ["45.76.232.146:32748", "3.81.39.58:32748", "104.243.32.211:32748", "67.231.28.123:32748", "185.18.148.223:32748"] {
+            netnode.addr_book.add(ip)
+            netnode.addr_book.modify_trust(ip, 100)
+        }
 	go netnode.process_messages()
 	go netnode.connect('127.0.0.1:10001')
         go netnode.manage_nodes()
@@ -106,6 +110,7 @@ fn (mut netnode NetworkNode) process_messages() {
                                 if peer.extrovert {
                                     netnode.send_msg(peer.fd, construct_message(VersionMessage{}))
                                 }
+                                netnode.addr_book.modify_trust(peer.ip, 5)
 				netnode.send_msg(peer.fd, construct_message(Verack{}))
                                 netnode.send_msg(peer.fd, construct_message(GetAddr{}))
 			}
@@ -212,7 +217,7 @@ fn (mut netnode NetworkNode) listen() {
                     mut stream2 := serialize.Stream{}
                     stream2.data = s.str
                     stream2.len = s.len
-                    msg := stream2.read<Message>()
+                    msg := stream2.read<Message>() or { eprintln("failed to parse message") continue }
                     // TODO: validity checks
                     netnode.receive_channel <- NetworkMessage{peer_fd: event.fd msg: msg}
                 }
@@ -248,6 +253,10 @@ pub fn (mut netnode NetworkNode) manage_nodes() {
         println("connecting to address book entries")
         lock netnode.addr_book.entries {
             for entry in netnode.addr_book.entries {
+                if entry.score < 0 {
+                    break
+                }
+
                 if netnode.should_connect(entry.ip) {
                     netnode.connect(entry.ip)
                 }

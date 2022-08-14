@@ -17,7 +17,7 @@ pub mut:
 interface Streamable {
 	write(mut stream Stream)
 mut:
-	read(mut stream Stream)
+	read(mut stream Stream) ?
 }
 
 pub fn (s1 Stream) == (s2 Stream) bool {
@@ -34,11 +34,9 @@ pub fn (mut s Stream) allocate(nbytes int) {
 	if nbytes < 1 {
 		panic('Stream.allocate: nbytes needs to be positive')
 	}
-	if nbytes < s.cap {
-		panic('Stream.allocate: nbytes too small')
-	} else if nbytes == s.cap {
-		// No need to allocate if we already have enough.
-		return
+	if nbytes <= s.cap {
+	    // No need to allocate if we already have enough.
+	    return
 	}
 
 	if isnil(s.data) {
@@ -71,15 +69,19 @@ pub fn (s &Stream) ptr() byteptr {
 	}
 }
 
-fn typehint_array_read<T>(mut s Stream, elem []T) T {
+fn typehint_array_read<T>(mut s Stream, elem []T) ?T {
     return s.read<T>()
 }
 
-fn typehint_read<T>(mut s Stream, obj T) T {
+fn typehint_read<T>(mut s Stream, obj T) ?T {
     return s.read<T>()
 }
 
-fn workaround_read<U>(mut s Stream) U {
+fn workaround_read_compactsize(mut s Stream) ?CompactSize {
+    return s.read<CompactSize>()
+}
+
+fn workaround_read<U>(mut s Stream) ?U {
     return s.read<U>()
 }
 
@@ -88,7 +90,7 @@ fn workaround_push<T>(mut arr []T, elem T) {
 }
 
 // TODO: make optional
-pub fn (mut s Stream) read<T>() T {
+pub fn (mut s Stream) read<T>() ?T {
 	unsafe {
 		$if T is CompactSize {
 			ptr := s.ptr()
@@ -96,22 +98,27 @@ pub fn (mut s Stream) read<T>() T {
 			if ptr[0] < 253 {
 				return CompactSize(ptr[0])
 			}
+                        length := 1 << (ptr[0] - 252)
+                        if s.offset + length > s.len {
+                            return error("out of bounds")
+                        }
+                        s.offset += length
 			match ptr[0] {
 				253 {
-					return CompactSize(s.read<u16>())
+					return CompactSize(u16(ptr[1]) | (u16(ptr[2]) << 8))
 				}
 				254 {
-					return CompactSize(s.read<u32>())
+					return CompactSize(u32(ptr[1]) | (u32(ptr[2]) << 8) | (u32(ptr[3]) << 16) | (u32(ptr[4]) << 24))
 				}
 				255 {
-					return CompactSize(s.read<u64>())
+					return CompactSize(u64(ptr[1]) | (u64(ptr[2]) << 8) | (u64(ptr[3]) << 16) | (u64(ptr[4]) << 24) | (u64(ptr[5]) << 32) | (u64(ptr[6]) << 40) | (u64(ptr[7]) << 48) | (u64(ptr[8]) << 56))
 				}
 				else {}
 			}
 			panic('Stream.read: This should never happen.')
 			return CompactSize(0)
 		} $else $if T is string {
-			size := int(CompactSize(workaround_read<CompactSize>(mut s)))
+			size := int(CompactSize(workaround_read_compactsize(mut s)?))
 			str_obj := tos(s.ptr(), size).clone()
 			s.offset += size
 			return str_obj
@@ -124,7 +131,7 @@ pub fn (mut s Stream) read<T>() T {
                 //        return arr
                 } $else $if T is Streamable {
                     mut obj := T{}
-                    obj.read(mut s)
+                    obj.read(mut s)?
                     return obj
                 //} $else $if T is $Struct {
                 //    mut obj := T{}
@@ -136,7 +143,7 @@ pub fn (mut s Stream) read<T>() T {
 		    obj := &T(s.ptr())
 		    s.offset += int(sizeof(T))
 		    if s.offset > s.len {
-			panic('Stream.read: out of bounds (offset: ${s.offset}, len: ${s.len})')
+			return error('out of bounds (offset: ${s.offset}, len: ${s.len})')
 		    }
 		    return *obj
                 }
@@ -148,9 +155,9 @@ pub fn (mut s Stream) read<T>() T {
 
 }
 
-pub fn (mut s Stream) read_into(mut dest byteptr, size int) {
+pub fn (mut s Stream) read_into(mut dest byteptr, size int) ? {
 	if s.offset + size > s.len {
-		panic('Stream.read_into: out of bounds')
+		return error('out of bounds')
 	}
 
 	unsafe {
@@ -159,9 +166,9 @@ pub fn (mut s Stream) read_into(mut dest byteptr, size int) {
 	s.offset += size
 }
 
-pub fn (mut s Stream) read_padded(size int) string {
+pub fn (mut s Stream) read_padded(size int) ?string {
 	if s.offset + size > s.len {
-		panic('Stream.read_padded: out of bounds')
+		return error('out of bounds')
 	}
 
 	mut ptr := s.ptr()

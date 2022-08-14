@@ -22,11 +22,11 @@ pub mut:
 	checksum [4]u8
 }
 
-pub fn (mut header MessageHeader) read(mut stream serialize.Stream) {
-	stream.read_into(mut &header.magic, 4)
-	header.command = stream.read_padded(12)
-	header.length = stream.read<u32>()
-	stream.read_into(mut &header.checksum, 4)
+pub fn (mut header MessageHeader) read(mut stream serialize.Stream) ? {
+	stream.read_into(mut &header.magic, 4)?
+	header.command = stream.read_padded(12)?
+	header.length = stream.read<u32>()?
+	stream.read_into(mut &header.checksum, 4)?
 }
 
 pub fn (header MessageHeader) write(mut stream serialize.Stream) {
@@ -44,14 +44,14 @@ pub mut:
 	port u16
 }
 
-pub fn (mut addr Address) read(mut stream serialize.Stream) {
+pub fn (mut addr Address) read(mut stream serialize.Stream) ? {
 	if !false {
-		addr.time = stream.read<u32>()
+		addr.time = stream.read<u32>()?
 	}
-	addr.services = stream.read<u64>()
+	addr.services = stream.read<u64>()?
 	unsafe {
-		stream.read_into(mut &addr.ip, 16)
-		addr.port = stream.read<u16>()
+		stream.read_into(mut &addr.ip, 16)?
+		addr.port = stream.read<u16>()?
 		//serialize.byteswap(&addr.ip, int(sizeof(addr.ip)))
 		//serialize.byteswap(mut &addr.port, int(sizeof(addr.port)))
 	}
@@ -83,15 +83,15 @@ pub mut:
 	start_height int
 }
 
-pub fn (mut msg VersionMessage) read(mut stream serialize.Stream) {
-	msg.version = stream.read<int>()
-	msg.services = stream.read<u64>()
-	msg.timestamp = stream.read<i64>()
-	msg.addr_recv.read(mut stream)
-	msg.addr_from.read(mut stream)
-	msg.nonce = stream.read<u64>()
-	msg.user_agent = stream.read<string>()
-	msg.start_height = stream.read<int>()
+pub fn (mut msg VersionMessage) read(mut stream serialize.Stream) ? {
+	msg.version = stream.read<int>()?
+	msg.services = stream.read<u64>()?
+	msg.timestamp = stream.read<i64>()?
+	msg.addr_recv.read(mut stream)?
+	msg.addr_from.read(mut stream)?
+	msg.nonce = stream.read<u64>()?
+	msg.user_agent = stream.read<string>()?
+	msg.start_height = stream.read<int>()?
 }
 
 pub fn (msg VersionMessage) write(mut stream serialize.Stream) {
@@ -108,7 +108,7 @@ pub fn (msg VersionMessage) write(mut stream serialize.Stream) {
 pub struct Verack {
 }
 
-pub fn (mut msg Verack) read(mut stream serialize.Stream) {}
+pub fn (mut msg Verack) read(mut stream serialize.Stream) ? {}
 
 pub fn (msg Verack) write(mut stream serialize.Stream) {}
 
@@ -117,8 +117,8 @@ pub mut:
 	nonce u64
 }
 
-pub fn (mut msg Ping) read(mut stream serialize.Stream) {
-	msg.nonce = stream.read<u64>()
+pub fn (mut msg Ping) read(mut stream serialize.Stream) ? {
+	msg.nonce = stream.read<u64>()?
 }
 
 pub fn (msg Ping) write(mut stream serialize.Stream) {
@@ -130,8 +130,8 @@ pub mut:
 	nonce u64
 }
 
-pub fn (mut msg Pong) read(mut stream serialize.Stream) {
-	msg.nonce = stream.read<u64>()
+pub fn (mut msg Pong) read(mut stream serialize.Stream) ? {
+	msg.nonce = stream.read<u64>()?
 }
 
 pub fn (msg Pong) write(mut stream serialize.Stream) {
@@ -140,7 +140,7 @@ pub fn (msg Pong) write(mut stream serialize.Stream) {
 
 pub struct GetAddr {}
 
-pub fn (mut msg GetAddr) read(mut stream serialize.Stream) {
+pub fn (mut msg GetAddr) read(mut stream serialize.Stream) ? {
 }
 
 pub fn (msg GetAddr) write(mut stream serialize.Stream) {
@@ -151,10 +151,10 @@ pub mut:
     list []Address
 }
 
-pub fn (mut msg Addr) read(mut stream serialize.Stream) {
-        size := u64(stream.read<serialize.CompactSize>())
+pub fn (mut msg Addr) read(mut stream serialize.Stream) ? {
+        size := u64(stream.read<serialize.CompactSize>()?)
         for _ in 0 .. size {
-            msg.list << stream.read<Address>()
+            msg.list << stream.read<Address>()?
         }
 }
 
@@ -176,32 +176,32 @@ pub fn payload_eq(payload1 Payload, payload2 Payload) bool {
 	return false
 }
 
-pub fn (mut payload Payload) read(mut stream serialize.Stream) {
+pub fn (mut payload Payload) read(mut stream serialize.Stream) ? {
 	// 2021-01-31: Smart cast doesn't work here, cast everything manually.
 	//             Weirdly, it works in the function below.
 	match payload {
 		VersionMessage {
 			mut payload_ := payload as VersionMessage
-			payload_.read(mut stream)
+			payload_.read(mut stream)?
 		}
 		Verack {
 			mut payload_ := payload as Verack
-			payload.read(mut stream)
+			payload.read(mut stream)?
 		}
 		Ping {
 			mut payload_ := payload as Ping
-			payload_.read(mut stream)
+			payload_.read(mut stream)?
 		}
 		Pong {
 			mut payload_ := payload as Pong
-			payload_.read(mut stream)
+			payload_.read(mut stream)?
 		}
                 GetAddr {
-			mut payload_ := stream.read<GetAddr>()
+			mut payload_ := stream.read<GetAddr>()?
                         payload = payload_
                 }
                 Addr {
-			mut payload_ := stream.read<Addr>()
+			mut payload_ := stream.read<Addr>()?
                         payload = payload_
                 }
 	}
@@ -240,34 +240,34 @@ pub fn (msg1 Message) == (msg2 Message) bool {
 	return msg1.MessageHeader == msg2.MessageHeader && payload_eq(msg1.payload, msg2.payload)
 }
 
-pub fn (mut msg Message) read(mut stream serialize.Stream) {
-	msg.MessageHeader.read(mut stream)
+pub fn (mut msg Message) read(mut stream serialize.Stream) ? {
+	msg.MessageHeader.read(mut stream)?
 	match msg.command {
 		'aries', 'version' {
 			mut payload := VersionMessage{}
-			payload.read(mut stream)
+			payload.read(mut stream)?
 			msg.payload = payload
 		}
 		'verack' {
 			mut payload := Verack{}
-			payload.read(mut stream)
+			payload.read(mut stream)?
 			msg.payload = payload
 		}
 		'ping' {
 			mut payload := Ping{}
-			payload.read(mut stream)
+			payload.read(mut stream)?
 			msg.payload = payload
 		}
 		'pong' {
 			mut payload := Pong{}
-			payload.read(mut stream)
+			payload.read(mut stream)?
 			msg.payload = payload
 		}
                 'getaddr' {
-                        msg.payload = stream.read<GetAddr>()
+                        msg.payload = stream.read<GetAddr>()?
                 }
                 'addr', 'gridaddr' {
-                        msg.payload = stream.read<Addr>()
+                        msg.payload = stream.read<Addr>()?
                 }
 		else {
 			eprintln('Message.read: unknown command ${util.sanitize_binary(msg.command)}')
