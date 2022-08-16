@@ -94,7 +94,7 @@ pub fn (mut netnode NetworkNode) run() {
 	netnode.receive_channel.close()
 }
 
-fn (mut netnode NetworkNode) process_messages() {
+pub fn (mut netnode NetworkNode) process_messages() {
 	mut stream := serialize.Stream{}
 	stream.allocate(16384)
 	for {
@@ -130,7 +130,7 @@ fn (mut netnode NetworkNode) process_messages() {
 	}
 }
 
-fn (mut netnode NetworkNode) connect(ip string) {
+pub fn (mut netnode NetworkNode) connect(ip string) {
         connection := net.dial_tcp(ip) or { return }
         netnode.notifier.add(connection.sock.handle, .read | .peer_hangup) or { eprintln("failed") return}
 	lock netnode.peers {
@@ -142,7 +142,7 @@ fn (mut netnode NetworkNode) connect(ip string) {
         netnode.send_msg(peer.fd, construct_message(VersionMessage{}))
 }
 
-fn (mut netnode NetworkNode) listen() {
+pub fn (mut netnode NetworkNode) listen() {
     mut listener := net.listen_tcp(.ip, '127.0.0.1:$server_port') or { panic(err) }
     defer { listener.close() or { eprintln("error while closing listener: ${err}")} }
 
