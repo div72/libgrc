@@ -196,6 +196,9 @@ pub fn (mut netnode NetworkNode) listen() {
                     if event.kind.has(.peer_hangup) {
                         netnode.logger.debug("remote disconnected")
                         netnode.notifier.remove(event.fd) or { panic("error while removing node for notify: ${err}") }
+                        lock netnode.peers {
+                            netnode.peers.delete(event.fd)
+                        }
                         continue
                     }
 
