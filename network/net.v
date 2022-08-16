@@ -1,5 +1,6 @@
 module network
 
+import log
 import net
 import os
 import os.notify
@@ -27,6 +28,8 @@ pub mut:
 	send_channel chan NetworkMessage = chan NetworkMessage{cap: 16}
 	receive_channel chan NetworkMessage = chan NetworkMessage{cap: 16}
         addr_book AddressBook
+
+        logger log.Log = log.Log{level: .info}
 }
 
 pub fn (mut netnode NetworkNode) send_msg(fd int, msg Message) {
@@ -103,7 +106,7 @@ pub fn (mut netnode NetworkNode) process_messages() {
 		peer_msg := <-netnode.receive_channel or { return }
                 mut peer := netnode.get_peer(peer_msg.peer_fd)
 		msg := peer_msg.msg
-		println(@FN + ": received ${msg.payload.type_name()} from ${peer_msg.peer_fd}")
+		netnode.logger.debug("received ${msg.payload.type_name()} from ${peer_msg.peer_fd}")
 		match msg.payload {
 			VersionMessage {
                                 peer.user_agent = msg.payload.user_agent.clone()
@@ -132,7 +135,9 @@ pub fn (mut netnode NetworkNode) process_messages() {
 
 pub fn (mut netnode NetworkNode) connect(ip string) {
         connection := net.dial_tcp(ip) or { return }
-        netnode.notifier.add(connection.sock.handle, .read | .peer_hangup) or { eprintln("failed") return}
+        netnode.notifier.add(connection.sock.handle, .read | .peer_hangup) or {
+            netnode.logger.error("failed to add epoll: ${err}") return
+        }
 	lock netnode.peers {
             // FIXME: Workaround for V shared bug.
 	    netnode.peers[connection.sock.handle] = &Peer{fd: connection.sock.handle extrovert: false ip: ip}
@@ -144,7 +149,7 @@ pub fn (mut netnode NetworkNode) connect(ip string) {
 
 pub fn (mut netnode NetworkNode) listen() {
     mut listener := net.listen_tcp(.ip, '127.0.0.1:$server_port') or { panic(err) }
-    defer { listener.close() or { eprintln("error while closing listener: ${err}")} }
+    defer { listener.close() or { netnode.logger.error("error while closing listener: ${err}")} }
 
     netnode.notifier.add(listener.sock.handle, .read) or { panic("error while adding listener for notify: ${err}") }
 
@@ -167,9 +172,9 @@ pub fn (mut netnode NetworkNode) listen() {
             match event.fd {
                 listener.sock.handle {
                     if connection := listener.accept() {
-                        ip := connection.peer_ip() or { eprintln("error while getting ip: ${err}") continue }
-                        netnode.notifier.add(connection.sock.handle, .read | .peer_hangup) or { eprintln("error while adding: ${err}") continue }
-                        println("New connection from ${ip}.")
+                        ip := connection.peer_ip() or { netnode.logger.error("error while getting ip: ${err}") continue }
+                        netnode.notifier.add(connection.sock.handle, .read | .peer_hangup) or { netnode.logger.error("error while adding: ${err}") continue }
+                        netnode.logger.info("New connection from ${ip}.")
                         lock netnode.peers {
                             // TODO: Check existing node?
                             netnode.peers[connection.sock.handle] = &Peer{fd: connection.sock.handle extrovert: true ip: ip}
@@ -177,7 +182,6 @@ pub fn (mut netnode NetworkNode) listen() {
                     }
                 }
                 pipefds[0] {
-                    println("sending messages")
                     C.read(pipefds[0], &pipe_buf[0], 256)
                     mut msg := NetworkMessage{}
                     for netnode.send_channel.try_pop(mut msg) == .success {
@@ -190,7 +194,7 @@ pub fn (mut netnode NetworkNode) listen() {
                 }
                 else {
                     if event.kind.has(.peer_hangup) {
-                        eprintln("remote disconnected")
+                        netnode.logger.debug("remote disconnected")
                         netnode.notifier.remove(event.fd) or { panic("error while removing node for notify: ${err}") }
                         continue
                     }
@@ -200,14 +204,14 @@ pub fn (mut netnode NetworkNode) listen() {
                     mut len := 0
                     time.sleep(400 * time.microsecond)
                     s, len = os.fd_read(event.fd, 16384) // TODO: handle larger messages
-                    println("Received ${len} bytes from ${event.fd}")
+                    netnode.logger.debug("Received ${len} bytes from ${event.fd}")
                     $if dump_messages? {
                         if mut file := os.open_append("${event.fd}.bin") {
                             defer { file.close() }
-                            file.write_string(s) or { eprintln(err.str()) continue }
+                            file.write_string(s) or { netnode.logger.error("failed to write to message dump file: ${err}") continue }
                             file.flush()
                         } else {
-                            eprintln("failed to open message dump file: ${err}")
+                            netnode.logger.error("failed to open message dump file: ${err}")
                         }
                     }
                     if len < 24 {
@@ -217,7 +221,7 @@ pub fn (mut netnode NetworkNode) listen() {
                     mut stream2 := serialize.Stream{}
                     stream2.data = s.str
                     stream2.len = s.len
-                    msg := stream2.read<Message>() or { eprintln("failed to parse message") continue }
+                    msg := stream2.read<Message>() or { netnode.logger.debug("failed to parse message") continue }
                     // TODO: validity checks
                     netnode.receive_channel <- NetworkMessage{peer_fd: event.fd msg: msg}
                 }
@@ -234,7 +238,7 @@ pub fn (mut netnode NetworkNode) manage_nodes() {
             for fd, peer_ in netnode.peers {
                 mut peer := &Peer(peer_)
                 if (30 * time.second < now - peer.connected_at) && peer.user_agent == '' {
-                    eprintln("disconnect ${fd} not advertising version")
+                    netnode.logger.debug("disconnect ${fd} not advertising version")
                     to_delete << fd
                     os.fd_close(fd)
                     netnode.addr_book.modify_trust(peer.ip, -20)
@@ -247,7 +251,7 @@ pub fn (mut netnode NetworkNode) manage_nodes() {
             }
         }
 
-        println("connecting to address book entries")
+        netnode.logger.debug("connecting to address book entries")
         lock netnode.addr_book.entries {
             for entry in netnode.addr_book.entries {
                 if entry.score < 0 {
