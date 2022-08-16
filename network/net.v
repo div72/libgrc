@@ -15,7 +15,7 @@ const message_start = [u8(0xcd), 0xf2, 0xc0, 0xef]!  // testnet
 
 const protocol_version = 180327
 
-const connect_limit = 1024
+const connect_limit = 16
 
 type PeerPtr = &Peer
 
@@ -229,25 +229,22 @@ fn (mut netnode NetworkNode) listen() {
 pub fn (mut netnode NetworkNode) manage_nodes() {
     for {
         now := time.utc()
-        shared peers := map[int]PeerPtr{}
-        lock peers, netnode.peers {
+        mut to_delete := []int{}
+        lock netnode.peers {
             for fd, peer_ in netnode.peers {
                 mut peer := &Peer(peer_)
-                if 30 * time.second > now - peer.connected_at {
-                    peers[fd] = peer_
-                    continue
-                }
-
-                if peer.user_agent == '' {
+                if (30 * time.second < now - peer.connected_at) && peer.user_agent == '' {
                     eprintln("disconnect ${fd} not advertising version")
+                    to_delete << fd
                     os.fd_close(fd)
-                    netnode.addr_book.modify_trust(peer.ip, -5)
+                    netnode.addr_book.modify_trust(peer.ip, -20)
                     continue
                 }
-
-                peers[fd] = peer_
             }
-            netnode.peers = peers
+
+            for fd in to_delete {
+                netnode.peers.delete(fd)
+            }
         }
 
         println("connecting to address book entries")
