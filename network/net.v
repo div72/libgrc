@@ -10,17 +10,16 @@ import time
 import cryptography
 import serialize
 
-const server_port = 22334
-
-const message_start = [u8(0xcd), 0xf2, 0xc0, 0xef]!  // testnet
-
 const protocol_version = 180327
-
-const connect_limit = 16
 
 type PeerPtr = &Peer
 
 pub struct NetworkNode {
+pub:
+        port u16 = 22334
+        inbound_connection_limit int = 8
+        outbound_connection_limit int = 8
+        message_start [4]u8
 pub mut:
         notifier notify.FdNotifier = notify.new() or { panic("failed to create notifier: ${err}") }
         send_signal_fd int = -1
@@ -48,7 +47,7 @@ pub fn (mut netnode NetworkNode) get_peer(fd int) &Peer {
 
 pub fn (netnode &NetworkNode) should_connect(ip string) bool {
     lock netnode.peers {
-        if netnode.peers.len > connect_limit {
+        if netnode.peers.len > netnode.outbound_connection_limit {
             return false
         }
 
@@ -89,7 +88,6 @@ pub fn (mut netnode NetworkNode) run() {
             netnode.addr_book.modify_trust(ip, 100)
         }
 	go netnode.process_messages()
-	go netnode.connect('127.0.0.1:10001')
         go netnode.manage_nodes()
         netnode.listen()
 
@@ -111,19 +109,19 @@ pub fn (mut netnode NetworkNode) process_messages() {
 			VersionMessage {
                                 peer.user_agent = msg.payload.user_agent.clone()
                                 if peer.extrovert {
-                                    netnode.send_msg(peer.fd, construct_message(VersionMessage{}))
+                                    netnode.send_msg(peer.fd, construct_message(netnode.message_start, VersionMessage{}))
                                 }
                                 netnode.addr_book.modify_trust(peer.ip, 5)
-				netnode.send_msg(peer.fd, construct_message(Verack{}))
-                                netnode.send_msg(peer.fd, construct_message(GetAddr{}))
+				netnode.send_msg(peer.fd, construct_message(netnode.message_start, Verack{}))
+                                netnode.send_msg(peer.fd, construct_message(netnode.message_start, GetAddr{}))
 			}
 			Ping {
-				netnode.send_msg(peer.fd, construct_message(Pong{nonce: msg.payload.nonce}))
+				netnode.send_msg(peer.fd, construct_message(netnode.message_start, Pong{nonce: msg.payload.nonce}))
 			}
                         Addr {
                                 for addr in msg.payload.list {
-                                    if addr.ip[10] == 255 && addr.ip[11] == 255 && addr.port == 60543 {
-                                        ip := "${addr.ip[12]}.${addr.ip[13]}.${addr.ip[14]}.${addr.ip[15]}:32748"
+                                    if addr.ip[10] == 255 && addr.ip[11] == 255 {
+                                        ip := "${addr.ip[12]}.${addr.ip[13]}.${addr.ip[14]}.${addr.ip[15]}:${C.ntohs(addr.port)}"
                                         netnode.addr_book.add(ip)
                                     }
                                 }
@@ -144,11 +142,11 @@ pub fn (mut netnode NetworkNode) connect(ip string) {
 	}
         mut peer := netnode.get_peer(connection.sock.handle)
         time.sleep(3)
-        netnode.send_msg(peer.fd, construct_message(VersionMessage{}))
+        netnode.send_msg(peer.fd, construct_message(netnode.message_start, VersionMessage{}))
 }
 
 pub fn (mut netnode NetworkNode) listen() {
-    mut listener := net.listen_tcp(.ip, '127.0.0.1:$server_port') or { panic(err) }
+    mut listener := net.listen_tcp(.ip, '127.0.0.1:${netnode.port}') or { panic(err) }
     defer { listener.close() or { netnode.logger.error("error while closing listener: ${err}")} }
 
     netnode.notifier.add(listener.sock.handle, .read) or { panic("error while adding listener for notify: ${err}") }

@@ -280,10 +280,9 @@ pub fn (msg Message) write(mut stream serialize.Stream) {
 	msg.payload.write(mut stream)
 }
 
-pub fn construct_message(payload Payload) Message {
+pub fn construct_message(message_start [4]u8, payload Payload) Message {
 	mut message := Message{}
-        message_start2 := message_start
-	message.magic = message_start2
+	message.magic = message_start
 	message.payload = payload
 	mut checksum_stream := serialize.Stream{}
 	checksum_stream.allocate(1024)

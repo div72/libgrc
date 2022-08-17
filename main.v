@@ -2,12 +2,13 @@ module main
 
 import time
 
+import chain
 import network
 
 struct Node {
 mut:
 	running bool = true
-	network_node &network.NetworkNode = &network.NetworkNode{}
+	network_node &network.NetworkNode = &network.NetworkNode{message_start: chain.testnet_message_start}
 }
 
 fn (mut node Node) run() {
