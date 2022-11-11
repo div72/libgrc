@@ -1,0 +1,4 @@
+module chain
+
+pub const testnet_message_start = [u8(0xcd), 0xf2, 0xc0, 0xef]!
+pub const mainnet_message_start = [u8(0x70), 0x35, 0x22, 0x05]!
