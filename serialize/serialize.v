@@ -1,7 +1,7 @@
 module serialize
 
-const max_u16 = 65535
-const max_u32 = 4294967295
+const max_u16 = u64(65535)
+const max_u32 = u64(4294967295)
 
 type CompactSize = u64
 
