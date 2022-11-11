@@ -206,15 +206,6 @@ pub fn (mut netnode NetworkNode) listen() {
                     time.sleep(400 * time.microsecond)
                     s, len = os.fd_read(event.fd, 16384) // TODO: handle larger messages
                     netnode.logger.debug("Received ${len} bytes from ${event.fd}")
-                    $if dump_messages? {
-                        if mut file := os.open_append("${event.fd}.bin") {
-                            defer { file.close() }
-                            file.write_string(s) or { netnode.logger.error("failed to write to message dump file: ${err}") continue }
-                            file.flush()
-                        } else {
-                            netnode.logger.error("failed to open message dump file: ${err}")
-                        }
-                    }
                     if len < 24 {
                         // TODO: add banscore
                         continue
